@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Text Reader: paste any text and have your browser read it aloud, with adjustable speed, voice choice, and sentence and word highlighting. Free, private, runs entirely in your browser.">
+<title>Text Reader</title>
+<style>
+body{font-family:Segoe UI,Arial,sans-serif;max-width:1400px;margin:20px auto;padding:0 20px;background:#f6f7fb;color:#222}
+h1{font-size:26px;margin-bottom:6px}
+#txt{width:100%;height:340px;min-height:150px;resize:vertical;overflow:auto;font-size:18px;line-height:1.6;padding:14px 18px;border:1px solid #ccc;border-radius:10px;box-sizing:border-box;background:#fff;outline:none}
+#txt:empty:before{content:attr(data-ph);color:#999}
+#txt.reading{cursor:pointer;border-color:#2b6de8}
+#txt img{max-width:100%}
+body.big #txt{height:calc(100vh - 210px)!important}
+::highlight(sent){background-color:#fff3a3}
+::highlight(word){background-color:#ffcf33}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:14px 0}
+button{font-size:17px;padding:10px 20px;border:0;border-radius:8px;cursor:pointer;background:#2b6de8;color:#fff}
+button.sec{background:#e3e7f0;color:#222}
+select{font-size:15px;padding:8px;border-radius:8px;max-width:420px}
+input[type=range]{width:260px}
+#speedVal{font-weight:bold;min-width:50px;display:inline-block}
+.small{color:#666;font-size:13px}
+.foot{margin:18px 0 10px;text-align:center;color:#888;font-size:12px}
+.foot a{color:#888}
+</style></head><body>
+<h1>Text Reader</h1>
+<div class="small">Paste text (formatting is kept), pick a voice and speed, press Play. Ctrl+Enter plays/pauses, Esc stops. While reading, click any sentence to jump there. Drag the bottom-right corner to resize, or press Expand.</div>
+<div class="row">
+ <button id="play">&#9654; Play</button>
+ <button id="pause" class="sec">&#10074;&#10074; Pause</button>
+ <button id="stop" class="sec">&#9632; Stop</button>
+ <button id="back" class="sec">&#8630; Back</button>
+ <button id="fwd" class="sec">Skip &#8631;</button>
+ <button id="clear" class="sec">Clear</button>
+ <button id="big" class="sec">&#x2922; Expand</button>
+ <button id="plain" class="sec" title="Remove all formatting">Plain text</button>
+</div>
+<div class="row">
+ <label>Speed <input type="range" id="speed" min="0.5" max="3" step="0.1" value="1"></label><span id="speedVal">1.0x</span>
+ <label>Voice <select id="voice"></select></label>
+ <span class="small" id="prog"></span>
+</div>
+<div id="txt" contenteditable="true" data-ph="Paste your text here..."></div>
+<footer class="foot">Made by <a href="https://johnbthomasjr.com">John B. Thomas Jr.</a></footer>
+<script>
+const s=speechSynthesis,$=id=>document.getElementById(id),hasHL=!!(window.CSS&&CSS.highlights);
+let voices=[],sents=[],map=[],full='',idx=0,playing=false,paused=false;
+function loadVoices(){voices=s.getVoices().filter(v=>v.lang.startsWith('en'));if(!voices.length)voices=s.getVoices();
+ voices.sort((a,b)=>(/natural|online/i.test(b.name)-/natural|online/i.test(a.name)));
+ const saved=localStorage.getItem('voice');$('voice').innerHTML=voices.map((v,i)=>`<option value="${i}">${v.name}</option>`).join('');
+ const si=voices.findIndex(v=>v.name===saved);if(si>=0)$('voice').value=si;}
+loadVoices();s.onvoiceschanged=loadVoices;
+$('speed').value=localStorage.getItem('speed')||1;$('speedVal').textContent=(+$('speed').value).toFixed(1)+'x';
+$('txt').innerHTML=localStorage.getItem('html')||'';
+function save(){localStorage.setItem('html',$('txt').innerHTML)}
+$('txt').oninput=save;
+$('txt').addEventListener('paste',()=>setTimeout(()=>{$('txt').querySelectorAll('script,style,meta,link').forEach(e=>e.remove());save()},0));
+const BLOCK=/^(P|DIV|H[1-6]|LI|UL|OL|TR|TD|TH|BLOCKQUOTE|PRE|SECTION|ARTICLE|HEADER|FOOTER|TABLE|DT|DD)$/;
+function blockOf(n){while(n&&n!==$('txt')){if(n.nodeType===1&&BLOCK.test(n.tagName))return n;n=n.parentNode}return $('txt')}
+function index(){full='';map=[];let lastB=null;
+ const w=document.createTreeWalker($('txt'),NodeFilter.SHOW_TEXT|NodeFilter.SHOW_ELEMENT);let n;
+ while(n=w.nextNode()){if(n.nodeType===1){if(n.tagName==='BR')full+='\n';continue}
+  const b=blockOf(n);if(lastB&&b!==lastB)full+='\n';lastB=b;map.push({node:n,start:full.length});full+=n.data}
+ sents=[];const re=/[^.!?\n]+[.!?]*["'\u201d\u2019)\]]*/g;let m;
+ while(m=re.exec(full)){const t=m[0];const lead=t.length-t.trimStart().length;const txt=t.trim();if(txt.replace(/[^\w]/g,'').length)sents.push({start:m.index+lead,end:m.index+lead+txt.length,text:txt})}}
+function pos(off){let lo=0;for(let i=0;i<map.length;i++){if(map[i].start<=off)lo=i;else break}
+ const e=map[lo];return {node:e.node,offset:Math.min(Math.max(off-e.start,0),e.node.data.length)}}
+function mkRange(a,b){const r=document.createRange(),p=pos(a),q=pos(b);r.setStart(p.node,p.offset);r.setEnd(q.node,q.offset);return r}
+function mark(i,ci,len){if(!hasHL)return;CSS.highlights.delete('word');CSS.highlights.delete('sent');if(i<0||!sents[i])return;
+ const st=sents[i],r=mkRange(st.start,st.end);CSS.highlights.set('sent',new Highlight(r));
+ if(ci!=null){if(!len){const mm=st.text.slice(ci).match(/^\S+/);len=mm?mm[0].length:0}
+  CSS.highlights.set('word',new Highlight(mkRange(st.start+ci,Math.min(st.start+ci+len,st.end))))}
+ else{const rect=r.getBoundingClientRect(),box=$('txt').getBoundingClientRect();
+  if(rect.top<box.top+20||rect.bottom>box.bottom-20)$('txt').scrollTop+=rect.top-box.top-box.height/3}}
+function speak(){if(idx>=sents.length){finish();$('prog').textContent='Finished.';return}
+ const u=new SpeechSynthesisUtterance(sents[idx].text);u.rate=+$('speed').value;const v=voices[$('voice').value];if(v)u.voice=v;
+ $('prog').textContent=`Sentence ${idx+1} of ${sents.length}`;mark(idx);const my=idx;
+ u.onboundary=e=>{if(e.name==='word'&&my===idx&&playing)mark(my,e.charIndex,e.charLength)};
+ u.onend=()=>{if(playing&&!paused&&my===idx){idx++;speak()}};s.speak(u);}
+function finish(){playing=false;paused=false;s.cancel();mark(-1);$('txt').contentEditable='true';$('txt').classList.remove('reading')}
+function restart(){if(playing){s.cancel();paused=false;setTimeout(speak,60)}}
+$('play').onclick=()=>{if(paused){s.resume();paused=false;return}if(playing)return;
+ index();if(!sents.length)return;idx=0;playing=true;$('txt').contentEditable='false';$('txt').classList.add('reading');speak()};
+$('pause').onclick=()=>{if(!playing)return;if(paused){s.resume();paused=false}else{s.pause();paused=true}};
+$('stop').onclick=()=>{finish();$('prog').textContent=''};
+$('back').onclick=()=>{if(!playing)return;idx=Math.max(0,idx-1);restart()};
+$('fwd').onclick=()=>{if(!playing)return;idx=Math.min(sents.length-1,idx+1);restart()};
+$('clear').onclick=()=>{$('stop').onclick();$('txt').innerHTML='';save()};
+$('plain').onclick=()=>{$('stop').onclick();const t=$('txt').innerText;$('txt').textContent=t;save()};
+$('speed').oninput=()=>{$('speedVal').textContent=(+$('speed').value).toFixed(1)+'x';localStorage.setItem('speed',$('speed').value)};
+$('speed').onchange=restart;
+$('voice').onchange=()=>{localStorage.setItem('voice',voices[$('voice').value].name);restart()};
+$('txt').onclick=e=>{if(!playing)return;let node,off;
+ if(document.caretRangeFromPoint){const r=document.caretRangeFromPoint(e.clientX,e.clientY);if(!r)return;node=r.startContainer;off=r.startOffset}else return;
+ const m=map.find(x=>x.node===node);if(!m)return;const g=m.start+off;
+ let i=sents.findIndex(x=>g>=x.start&&g<=x.end);if(i<0)i=sents.findIndex(x=>x.start>g);if(i>=0){idx=i;restart()}};
+function setBig(b){document.body.classList.toggle('big',b);$('big').innerHTML=b?'&#x2921; Shrink':'&#x2922; Expand';localStorage.setItem('big',b?'1':'')}
+$('big').onclick=()=>setBig(!document.body.classList.contains('big'));setBig(!!localStorage.getItem('big'));
+document.onkeydown=e=>{if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();playing?$('pause').onclick():$('play').onclick()}if(e.key==='Escape')$('stop').onclick()};
+</script></body></html>
